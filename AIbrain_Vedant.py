@@ -16,6 +16,22 @@ N_ACTIONS = 4
 RAY_NORM = 5.0
 SPEED_NORM = 500.0
 
+HEURISTIC_KEYS = [
+    "throttle_front_gain", "throttle_flank_gain", "throttle_speed_penalty", "throttle_bias",
+    "brake_speed_gain", "brake_front_relief", "brake_bias",
+    "steer_gain", "steer_bias",
+    "corner_front_thresh", "commit_frames", "safe_speed_frac_per_clearance",
+]
+HEURISTIC_DEFAULTS = {
+    "throttle_front_gain": 5.0, "throttle_flank_gain": 1.0,
+    "throttle_speed_penalty": 1.2, "throttle_bias": 1.1,
+    "brake_speed_gain": 3.0, "brake_front_relief": 10.0, "brake_bias": -1.6,
+    "steer_gain": 4.0, "steer_bias": -0.25,
+    "corner_front_thresh": 0.42, "commit_frames": 4.0,
+    "safe_speed_frac_per_clearance": 1.35,
+}
+MUTATION_COUNT_KEYS = ["heuristic", "W1", "b1", "W2", "b2", "trust"]
+
 
 class AIbrain_Vedant:
 
@@ -33,20 +49,7 @@ class AIbrain_Vedant:
         self.init_param()
 
     def init_param(self) -> None:
-        self.heuristic = {
-            "throttle_front_gain": 5.0,
-            "throttle_flank_gain": 1.0,
-            "throttle_speed_penalty": 1.2,
-            "throttle_bias": 1.1,
-            "brake_speed_gain": 3.0,
-            "brake_front_relief": 10.0,
-            "brake_bias": -1.6,
-            "steer_gain": 4.0,
-            "steer_bias": -0.25,
-            "corner_front_thresh": 0.42,
-            "commit_frames": 4.0,
-            "safe_speed_frac_per_clearance": 1.35,
-        }
+        self.heuristic = dict(HEURISTIC_DEFAULTS)
         self._steer_ray_weights = np.array(
             [-0.6, -1.0, -0.9, -0.5, 0.0, 0.5, 0.9, 1.0, 0.6]
         )
@@ -57,9 +60,7 @@ class AIbrain_Vedant:
         self.b2 = np.zeros(N_ACTIONS)
         self.trust = np.full(N_ACTIONS, 0.05)
 
-        self._mutation_counts = {
-            "heuristic": 0, "W1": 0, "b1": 0, "W2": 0, "b2": 0, "trust": 0,
-        }
+        self._mutation_counts = {key: 0 for key in MUTATION_COUNT_KEYS}
 
         self.NAME = "Vedant_" + "".join(random.choices(self.chars, k=5))
 
@@ -249,16 +250,24 @@ class AIbrain_Vedant:
         self.store()
 
     def store(self) -> None:
-        self.parameters = copy.deepcopy({
-            "heuristic": self.heuristic,
-            "W1": self.W1,
-            "b1": self.b1,
-            "W2": self.W2,
-            "b2": self.b2,
-            "trust": self.trust,
-            "mutation_counts": self._mutation_counts,
-            "NAME": self.NAME,
-        })
+        heuristic_values = np.array([self.heuristic[k] for k in HEURISTIC_KEYS], dtype=float)
+        mutation_count_values = np.array(
+            [self._mutation_counts[k] for k in MUTATION_COUNT_KEYS], dtype=np.int64
+        )
+
+        self.parameters = {
+            "heuristic_values": heuristic_values,
+            "W1": np.array(self.W1, dtype=float, copy=True),
+            "b1": np.array(self.b1, dtype=float, copy=True),
+            "W2": np.array(self.W2, dtype=float, copy=True),
+            "b2": np.array(self.b2, dtype=float, copy=True),
+            "trust": np.array(self.trust, dtype=float, copy=True),
+            "mutation_count_values": mutation_count_values,
+            "NAME": np.array(self.NAME),
+        }
+
+    def get_parameters(self) -> dict[str, Any]:
+        return copy.deepcopy(self.parameters)
 
     def set_parameters(self, parameters: Any) -> None:
         if isinstance(parameters, np.lib.npyio.NpzFile):
@@ -268,35 +277,43 @@ class AIbrain_Vedant:
 
         self.parameters = params_dict
 
-        loaded_heuristic = self.parameters.get("heuristic")
-        if loaded_heuristic is not None:
-            loaded_heuristic = dict(loaded_heuristic.item() if hasattr(loaded_heuristic, "item") else loaded_heuristic)
-            defaults = {
-                "throttle_front_gain": 5.0, "throttle_flank_gain": 1.0,
-                "throttle_speed_penalty": 1.2, "throttle_bias": 1.1,
-                "brake_speed_gain": 3.0, "brake_front_relief": 10.0, "brake_bias": -1.6,
-                "steer_gain": 4.0, "steer_bias": -0.25,
-                "corner_front_thresh": 0.42, "commit_frames": 4.0,
-                "safe_speed_frac_per_clearance": 1.35,
-            }
-            self.heuristic = {k: float(loaded_heuristic.get(k, v)) for k, v in defaults.items()}
+        if "heuristic_values" in params_dict:
+            values = np.asarray(params_dict["heuristic_values"], dtype=float).ravel()
+            self.heuristic = dict(HEURISTIC_DEFAULTS)
+            for key, val in zip(HEURISTIC_KEYS, values):
+                self.heuristic[key] = float(val)
+        elif "heuristic" in params_dict:
+            loaded = params_dict["heuristic"]
+            loaded = dict(loaded.item() if hasattr(loaded, "item") else loaded)
+            self.heuristic = {k: float(loaded.get(k, v)) for k, v in HEURISTIC_DEFAULTS.items()}
+        else:
+            self.heuristic = dict(HEURISTIC_DEFAULTS)
+
         self.W1 = np.array(self.parameters["W1"], dtype=float)
         self.b1 = np.array(self.parameters["b1"], dtype=float)
         self.W2 = np.array(self.parameters["W2"], dtype=float)
         self.b2 = np.array(self.parameters["b2"], dtype=float)
         self.trust = np.array(self.parameters.get("trust", np.full(N_ACTIONS, 0.05)), dtype=float)
 
-        loaded_counts = self.parameters.get("mutation_counts")
-        if loaded_counts is not None:
+        if "mutation_count_values" in params_dict:
+            values = np.asarray(params_dict["mutation_count_values"]).ravel()
+            self._mutation_counts = {key: 0 for key in MUTATION_COUNT_KEYS}
+            for key, val in zip(MUTATION_COUNT_KEYS, values):
+                self._mutation_counts[key] = int(val)
+        elif "mutation_counts" in params_dict:
+            loaded_counts = params_dict["mutation_counts"]
             self._mutation_counts = dict(
                 loaded_counts.item() if hasattr(loaded_counts, "item") else loaded_counts
             )
         else:
-            self._mutation_counts = {"heuristic": 0, "W1": 0, "b1": 0, "W2": 0, "b2": 0, "trust": 0}
+            self._mutation_counts = {key: 0 for key in MUTATION_COUNT_KEYS}
 
-        self.NAME = str(self.parameters["NAME"])
+        self.NAME = str(np.asarray(self.parameters["NAME"]).item()) if hasattr(
+            np.asarray(self.parameters["NAME"]), "item"
+        ) else str(self.parameters["NAME"])
 
         self._reset_episode_state()
+        self.store()
 
     def calculate_score(self, distance: float, time: float, no: int) -> None:
         avg_speed_bonus = distance / max(time, 0.05)
@@ -310,9 +327,6 @@ class AIbrain_Vedant:
 
     def getscore(self) -> float:
         return self.score
-
-    def get_parameters(self) -> dict[str, Any]:
-        return copy.deepcopy(self.parameters)
 
 
 if __name__ == "__main__":
